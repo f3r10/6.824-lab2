@@ -167,6 +167,9 @@ type AppendEntryArgs struct {
 type AppendEntryReply struct {
 	Term int
 	Success bool
+	// for roll back quickly
+	XTerm int
+	XIndex int
 }
 
 //
@@ -198,37 +201,48 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("[%d] getting request to vote from[%v], my log[%v], term[%d], commitIndex[%d]", rf.me, args, rf.log, rf.currentTerm, rf.commitIndex)
+	DPrintf("[%d] getting request to vote from[%v], last log entry[%v], term[%d], commitIndex[%d]", rf.me, args, rf.getLastLogEntry(), rf.currentTerm, rf.commitIndex)
 	rfTerm := rf.currentTerm
 	currentState := rf.state
 	if (currentState == Leader) {
 		reply.Votegranted = false
 		reply.Term = rf.currentTerm
-	}
-	if (args.Term < rfTerm) {
-		reply.Votegranted = false
-		reply.Term = rfTerm
 	} else {
-		if (args.Term > rfTerm) {
-			rf.ConvertToFollower(args.Term)
-		}
-		finalVote := true
-		for _, item := range rf.log[:rf.commitIndex] {
-			if args.Lastlogindex >= item.Index && args.Lastlogterm >= item.Term {
-				finalVote = true
-			} else {
-				finalVote = false
-			}
-		}
-		if (finalVote) {
-			// rf.ConvertToFollower(args.Term)
-			reply.Votegranted = true
-			reply.Term = rf.currentTerm
-			DPrintf("[RequestVote-ConvertToFollower][%d] term [%d] args[%v]", rf.me, rf.currentTerm, args)
-		} else {
-			DPrintf("[RequestVote-ConvertToFollower][%d] candidate[%v] is not up to date[%v] in term [%d]", rf.me, args, rf.log ,rf.currentTerm)
+		if (args.Term < rfTerm) {
 			reply.Votegranted = false
-			reply.Term = rf.currentTerm
+			reply.Term = rfTerm
+		} else {
+			if (args.Term > rfTerm) {
+				rf.state = Follower
+				rf.currentTerm = args.Term
+				rf.votedFor = -1
+				// rf.ConvertToFollower(args.Term)
+			}
+			if (rf.votedFor != -1) {
+				DPrintf("[RequestVote][%d] already voted for [%d]", rf.me, rf.votedFor)
+				reply.Votegranted = false
+				reply.Term = rf.currentTerm
+			} else {
+				if entry := rf.getLogEntry(rf.commitIndex - 1); entry.Index == 0 {
+					rf.ConvertToFollower(rf.currentTerm)
+					reply.Votegranted = true
+					rf.votedFor = args.Candidateid
+					reply.Term = rf.currentTerm
+					DPrintf("[RequestVote-ConvertToFollower][%d] term [%d] args[%v]", rf.me, rf.currentTerm, args)
+				} else {
+					if (args.Lastlogterm >= entry.Term && args.Lastlogindex >= entry.Index) {
+						DPrintf("[RequestVote-ConcedeVote][%d] term [%d] args[%v] entry[%v]", rf.me, rf.currentTerm, args, entry)
+						rf.ConvertToFollower(rf.currentTerm)
+						rf.votedFor = args.Candidateid
+						reply.Votegranted = true
+						reply.Term = rf.currentTerm
+					} else {
+						DPrintf("[RequestVote-DenyVote][%d] candidate[%v] is not up to date[%v] in term [%d]", rf.me, args, rf.log ,rf.currentTerm)
+						reply.Votegranted = false
+						reply.Term = rf.currentTerm
+					}
+				}
+			}
 		}
 	}
 }
@@ -254,6 +268,18 @@ func (rf *Raft) CheckLogEntryAt(prevLogIndex int, prevLogTerm int) bool {
 	}
 }
 
+func (rf *Raft) GetLastEntryWithTerm(term int, from int) int {
+	default_entry := 0
+	for i := from; i >= 0; i-- {
+		if (rf.log[i].Term != term) {
+			return i
+		} else {
+			continue
+		}
+	}
+	return default_entry
+}
+
 // args-log entries are empty if call is just a hearbeat.
 func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	// if leader's Term which comes in the RPC arg is less that the node's currentTerm then return False
@@ -274,15 +300,19 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			DPrintf("[AppendEntry][%d] last entry[%v] is different from prevLogIndex[%v]", rf.me, rf.getLastLogEntry(), args.PrevLogIndex)
 			reply.Success = false
 			reply.Term = currentTerm
+			reply.XTerm = -1
+			reply.XIndex = len(rf.log)
 		} else if _entry.Index > 0 && _entry.Term != args.PrevLogTerm {
 			DPrintf("[AppendEntry][%d] entry with different term entry[%v]", rf.me, _entry)
 			reply.Success = false
 			reply.Term = currentTerm
+			reply.XTerm = _entry.Term
+			reply.XIndex = rf.GetLastEntryWithTerm(_entry.Term, args.PrevLogIndex - 1)
 		} else {
 			for _, item := range args.Entries {
 				if existItemOnLog := rf.getLogEntry(item.Index-1); existItemOnLog.Index > 0 {
 					if (existItemOnLog.Term == item.Term) {
-						DPrintf("[Follower][%d] idempotent append entry send by [%d] for term[%d]", rf.me, args.LeaderId, args.Term)
+						// DPrintf("[Follower][%d] idempotent append entry send by [%d] for term[%d]", rf.me, args.LeaderId, args.Term)
 						continue
 					} else {
 						DPrintf("[Follower][%d] conflict entry[%v] send by [%d] for term[%d]", rf.me, item, args.LeaderId, args.Term)
@@ -570,9 +600,24 @@ func (rf *Raft) SendAppendEntry(peer int) {
 			DPrintf("[Leader-ConverToFollower][%d] term [%d] peer[%d]", rf.me, aereply.Term, peer)
 			rf.ConvertToFollower(aereply.Term)
 		} else {
-			if rf.nextIndex[peer] >= 1 && aereply.Term !=0 && rf.state == Leader {
-				DPrintf("[SendAppendEntry][%d] decrease nextIndex of [%d]", rf.me, peer)
-				rf.nextIndex[peer] -= 1
+			if aereply.Term !=0 && rf.state == Leader {
+				DPrintf("[SendAppendEntry][%d] decrease nextIndex of [%d], reply[%v]", rf.me, peer, aereply)
+				if (aereply.XTerm == -1) {
+					rf.nextIndex[peer] = aereply.XIndex
+				} else {
+					findConflictedTerm := false
+					for i := len(rf.log)-1; i >= 0; i-- {
+						if (rf.log[i].Term == aereply.XTerm) {
+							findConflictedTerm = true
+							rf.nextIndex[peer] = rf.log[i].Index + 1
+							break
+						}
+					}
+					if (!findConflictedTerm) {
+						rf.nextIndex[peer] = aereply.XIndex
+					}
+				}
+				// rf.nextIndex[peer] -= 1
 			}
 		}
 	}
