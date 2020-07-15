@@ -638,30 +638,43 @@ func TestPersist22C(t *testing.T) {
 		leader1 := cfg.checkOneLeader()
 
 		cfg.disconnect((leader1 + 1) % servers)
+		DPrintf("ACTION:Disconnected [%d]", (leader1 + 1) % servers)
 		cfg.disconnect((leader1 + 2) % servers)
+		DPrintf("ACTION:Disconnected [%d]", (leader1 + 2) % servers)
 
 		cfg.one(10+index, servers-2, true)
 		index++
 
 		cfg.disconnect((leader1 + 0) % servers)
+		DPrintf("ACTION:Disconnected [%d]", (leader1 + 0) % servers)
 		cfg.disconnect((leader1 + 3) % servers)
+		DPrintf("ACTION:Disconnected [%d]", (leader1 + 3) % servers)
 		cfg.disconnect((leader1 + 4) % servers)
+		DPrintf("ACTION:Disconnected [%d]", (leader1 + 4) % servers)
 
 		cfg.start1((leader1 + 1) % servers)
+		DPrintf("ACTION:Restart [%d]", (leader1 + 1) % servers)
 		cfg.start1((leader1 + 2) % servers)
+		DPrintf("ACTION:Restart [%d]", (leader1 + 2) % servers)
 		cfg.connect((leader1 + 1) % servers)
+		DPrintf("ACTION:Connected [%d]", (leader1 + 1) % servers)
 		cfg.connect((leader1 + 2) % servers)
+		DPrintf("ACTION:Connected [%d]", (leader1 + 2) % servers)
 
 		time.Sleep(RaftElectionTimeout)
 
 		cfg.start1((leader1 + 3) % servers)
+		DPrintf("ACTION:Restart [%d]", (leader1 + 3) % servers)
 		cfg.connect((leader1 + 3) % servers)
+		DPrintf("ACTION:Connected [%d]", (leader1 + 3) % servers)
 
 		cfg.one(10+index, servers-2, true)
 		index++
 
 		cfg.connect((leader1 + 4) % servers)
+		DPrintf("ACTION:Connected [%d]", (leader1 + 4) % servers)
 		cfg.connect((leader1 + 0) % servers)
+		DPrintf("ACTION:Connected [%d]", (leader1 + 0) % servers)
 	}
 
 	cfg.one(1000, servers, true)
@@ -826,6 +839,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
 			cfg.disconnect(leader)
+			DPrintf("ACTION:Disconnected leader [%d]", leader)
 			nup -= 1
 		}
 
@@ -833,6 +847,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
 				cfg.connect(s)
+				DPrintf("ACTION:Connected [%d]", s)
 				nup += 1
 			}
 		}
@@ -841,6 +856,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
+			DPrintf("ACTION:Connected [%d]", i)
 		}
 	}
 

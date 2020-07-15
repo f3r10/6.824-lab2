@@ -182,7 +182,7 @@ func (cfg *config) start1(i int) {
 					}
 				}
 				_, prevok := cfg.logs[i][m.CommandIndex-1]
-				DPrintf("[ACTION] chan msg from [%d], prevok[%t], logs[%v]", i, prevok, cfg.logs[i])
+				// DPrintf("[ACTION] chan msg from [%d], prevok[%t], logs[%v]", i, prevok, cfg.logs[i])
 				cfg.logs[i][m.CommandIndex] = v
 				if m.CommandIndex > cfg.maxIndex {
 					cfg.maxIndex = m.CommandIndex
